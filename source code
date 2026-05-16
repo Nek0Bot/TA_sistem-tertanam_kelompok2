@@ -1,0 +1,274 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+
+// ======================
+// WIFI
+// ======================
+const char* WIFI_SSID     = "Wokwi-GUEST";
+const char* WIFI_PASSWORD = "";
+
+// ======================
+// MQTT
+// ======================
+const char* MQTT_BROKER = "broker.hivemq.com";
+const int   MQTT_PORT   = 1883;
+const char* CLIENT_ID   = "smarthome_kel2_node1";
+
+// ======================
+// TOPIC
+// ======================
+const char* TOPIC_TEMP   = "smarthome_kel2/living_room/temperature";
+const char* TOPIC_HUM    = "smarthome_kel2/living_room/humidity";
+const char* TOPIC_MOTION = "smarthome_kel2/living_room/motion";
+const char* TOPIC_ALERT  = "smarthome_kel2/living_room/alert";
+const char* TOPIC_STATUS = "smarthome_kel2/status/node1";
+
+// ======================
+// PIN
+// ======================
+#define DHT_PIN    15
+#define PIR_PIN    27
+#define GREEN_LED  26
+#define BLUE_LED   25
+
+// ======================
+// OBJEK
+// ======================
+WiFiClient   espClient;
+PubSubClient mqttClient(espClient);
+DHT          dht(DHT_PIN, DHT22);
+
+// ======================
+// TIMER
+// ======================
+unsigned long lastDhtRead   = 0;
+unsigned long lastReconnect = 0;
+const unsigned long DHT_INTERVAL       = 5000;
+const unsigned long RECONNECT_INTERVAL = 5000;
+
+// ======================
+// STATE
+// ======================
+bool lastMotionState = LOW;
+bool mqttOk          = false;
+
+// ======================
+// WIFI CONNECT
+// ======================
+void connectWiFi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+
+  Serial.println("[WiFi] Connecting...");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  // Tunggu maksimal 10 detik
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - start > 10000) {
+      Serial.println("[WiFi] Timeout! Lanjut tanpa WiFi.");
+      return;
+    }
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println();
+  Serial.print("[WiFi] Connected! IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+// ======================
+// MQTT RECONNECT
+// Non-blocking, timeout 3 detik per attempt
+// ======================
+void reconnectMQTT() {
+  if (mqttClient.connected()) {
+    mqttOk = true;
+    return;
+  }
+
+  // Jangan coba terlalu sering
+  unsigned long now = millis();
+  if (now - lastReconnect < RECONNECT_INTERVAL) return;
+  lastReconnect = now;
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[MQTT] Skip, WiFi belum konek.");
+    return;
+  }
+
+  Serial.print("[MQTT] Connecting... ");
+
+  // Set timeout koneksi lebih pendek biar tidak blocking lama
+  espClient.setTimeout(3000);
+
+  bool connected = mqttClient.connect(
+    CLIENT_ID,
+    TOPIC_STATUS,
+    1,
+    true,
+    "OFFLINE"
+  );
+
+  if (connected) {
+    mqttOk = true;
+    Serial.println("Connected!");
+    mqttClient.publish(TOPIC_STATUS, "ONLINE", true);
+  } else {
+    mqttOk = false;
+    Serial.print("Failed! rc=");
+    Serial.print(mqttClient.state());
+    Serial.println(" — akan coba lagi...");
+  }
+}
+
+// ======================
+// PUBLISH DHT
+// Tetap baca & print sensor meski MQTT mati
+// ======================
+void publishDHT() {
+  float temperature = dht.readTemperature();
+  float humidity    = dht.readHumidity();
+
+  // Validasi sensor
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("[DHT] Read error, skip.");
+    return;
+  }
+
+  String tempStr = String(temperature, 2);
+  String humStr  = String(humidity, 2);
+
+  // Selalu print ke Serial meski MQTT mati
+  Serial.println("----------------------------------------");
+  Serial.print("[DHT] Temp     : ");
+  Serial.print(tempStr);
+  Serial.println(" C");
+  Serial.print("[DHT] Humidity : ");
+  Serial.print(humStr);
+  Serial.println(" %");
+
+  // Cek alert
+  bool alert = (temperature > 30.0 || humidity > 70.0);
+
+  if (alert) {
+    digitalWrite(BLUE_LED, HIGH);
+    Serial.println("[ALERT] TINGGI! Blue LED ON");
+  } else {
+    digitalWrite(BLUE_LED, LOW);
+    Serial.println("[ALERT] Normal. Blue LED OFF");
+  }
+
+  // Publish ke MQTT hanya kalau konek
+  if (mqttOk && mqttClient.connected()) {
+    mqttClient.publish(TOPIC_TEMP, tempStr.c_str(), true);
+    mqttClient.publish(TOPIC_HUM,  humStr.c_str(),  true);
+    mqttClient.publish(TOPIC_ALERT, alert ? "HIGH TEMP/HUMIDITY" : "NORMAL");
+    Serial.println("[MQTT] Data terkirim.");
+  } else {
+    Serial.println("[MQTT] Offline, data tidak dikirim.");
+  }
+
+  Serial.println("----------------------------------------");
+}
+
+// ======================
+// SETUP
+// ======================
+void setup() {
+  Serial.begin(115200);
+  delay(1000); // beri waktu Serial Monitor terbuka
+
+  Serial.println();
+  Serial.println("=============================");
+  Serial.println("  SmartHome Kel2 - Node1    ");
+  Serial.println("=============================");
+
+  // Inisialisasi DHT
+  dht.begin();
+  delay(1000); // beri waktu sensor stabilize
+
+  // Inisialisasi pin
+  pinMode(PIR_PIN,   INPUT);
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(BLUE_LED,  OUTPUT);
+  digitalWrite(GREEN_LED, LOW);
+  digitalWrite(BLUE_LED,  LOW);
+
+  Serial.println("[SYS] Pin OK");
+
+  // Koneksi WiFi
+  connectWiFi();
+
+  // Setup MQTT
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.setBufferSize(512);
+  mqttClient.setKeepAlive(15);
+  mqttClient.setSocketTimeout(3); // timeout 3 detik
+
+  // Coba konek MQTT pertama kali
+  reconnectMQTT();
+
+  Serial.println("[SYS] Setup selesai, mulai loop...");
+}
+
+// ======================
+// LOOP
+// ======================
+void loop() {
+
+  // Jaga WiFi
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WiFi] Terputus, reconnecting...");
+    connectWiFi();
+  }
+
+  // Jaga MQTT (non-blocking)
+  if (!mqttClient.connected()) {
+    mqttOk = false;
+    reconnectMQTT();
+  }
+
+  mqttClient.loop();
+
+  // ======================
+  // PIR — deteksi gerakan
+  // ======================
+  bool motionNow = digitalRead(PIR_PIN);
+
+  if (motionNow != lastMotionState) {
+    lastMotionState = motionNow;
+
+    if (motionNow == HIGH) {
+      digitalWrite(GREEN_LED, HIGH);
+      Serial.println("[PIR] Motion DETECTED — Green LED ON");
+
+      if (mqttOk && mqttClient.connected()) {
+        mqttClient.publish(TOPIC_MOTION, "DETECTED");
+        Serial.println("[MQTT] Motion publish OK");
+      }
+
+    } else {
+      digitalWrite(GREEN_LED, LOW);
+      Serial.println("[PIR] Motion CLEAR — Green LED OFF");
+
+      if (mqttOk && mqttClient.connected()) {
+        mqttClient.publish(TOPIC_MOTION, "CLEAR");
+        Serial.println("[MQTT] Motion publish OK");
+      }
+    }
+  }
+
+  // ======================
+  // DHT — tiap 5 detik
+  // ======================
+  unsigned long now = millis();
+  if (now - lastDhtRead >= DHT_INTERVAL) {
+    lastDhtRead = now;
+    publishDHT();
+  }
+
+  delay(50);
+}
