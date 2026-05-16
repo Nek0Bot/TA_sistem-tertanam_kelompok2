@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "author": "Kelompok 2",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 0,
+      "left": 130,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-dht22",
+      "id": "dht1",
+      "top": -130,
+      "left": 370,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pir-motion-sensor",
+      "id": "pir1",
+      "top": 90,
+      "left": 370,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "ledGreen",
+      "top": -100,
+      "left": 30,
+      "attrs": { "color": "green" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r1",
+      "top": -60,
+      "left": 30,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "ledBlue",
+      "top": 40,
+      "left": 30,
+      "attrs": { "color": "blue" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r2",
+      "top": 80,
+      "left": 30,
+      "attrs": { "value": "220" }
+    }
+  ],
+
+  "connections": [
+    ["esp:TX0", "$serialMonitor:RX", "", []],
+    ["esp:RX0", "$serialMonitor:TX", "", []],
+
+    ["dht1:VCC", "esp:3V3",   "red",   ["v40", "h-260"]],
+    ["dht1:GND", "esp:GND.1", "black", ["v160", "h-280"]],
+    ["dht1:SDA", "esp:15",    "blue",  ["v180", "h-170"]],
+
+    ["pir1:VCC", "esp:3V3",   "red",   ["v20", "h-230"]],
+    ["pir1:GND", "esp:GND.2", "black", ["v20", "h-200"]],
+    ["pir1:OUT", "esp:27",    "green", ["v10",  "h-285"]],
+
+    ["ledGreen:A", "esp:26",   "green", ["v180"]],
+    ["ledGreen:C", "r1:1",     "black", []],
+    ["r1:2",       "esp:GND.3","black", ["v20", "h190"]],
+
+    ["ledBlue:A",  "esp:25",   "blue",  ["v20",  "h110"]],
+    ["ledBlue:C",  "r2:1",     "black", []],
+    ["r2:2",       "esp:GND.3","black", ["v14",  "h188"]]
+  ],
+
+  "dependencies": {}
+}
